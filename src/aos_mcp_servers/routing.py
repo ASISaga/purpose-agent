@@ -27,7 +27,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Final, List, Optional
+import re
 
 
 class MCPTransportType(Enum):
@@ -311,3 +312,65 @@ class AgentFrameworkMCPServerAdapter:
         """
         await self._ensure_connected()
         return await self._tool.call_tool(tool_name, **params)
+
+
+# ---------------------------------------------------------------------------
+# Routing tag constants and classifier
+# ---------------------------------------------------------------------------
+
+# All known routing tags — canonical uppercase form
+ROUTING_TAGS: Final[frozenset[str]] = frozenset(
+    {"[ROUTE:CFO]", "[ROUTE:CMO]", "[COMPLETE]", "[HANDBACK]"}
+)
+
+# Scan window: only inspect this many characters from the end of a response
+_TAIL_CHARS: Final[int] = 120
+
+# Pattern matching any routing tag (case-insensitive)
+_TAG_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"\[(ROUTE:CFO|ROUTE:CMO|COMPLETE|HANDBACK)\]",
+    re.IGNORECASE,
+)
+
+
+class RoutingClassifier:
+    """
+    Stateless classifier that detects routing tags in LLM response text.
+
+    This class is intentionally stateless — all state lives in the agent.
+    It can be used as a utility from any layer in the hierarchy.
+    """
+
+    @staticmethod
+    def extract_tag(response_text: str) -> str | None:
+        """
+        Return the routing tag found in the response tail, or None.
+
+        Scans only the last _TAIL_CHARS characters for efficiency.
+        Returns the tag in canonical uppercase form (e.g., '[ROUTE:CFO]').
+        """
+        tail = response_text[-_TAIL_CHARS:] if len(response_text) > _TAIL_CHARS else response_text
+        match = _TAG_PATTERN.search(tail)
+        if match:
+            return f"[{match.group(1).upper()}]"
+        return None
+
+    @staticmethod
+    def has_tag(response_text: str) -> bool:
+        """Return True if any routing tag is present in the response tail."""
+        return RoutingClassifier.extract_tag(response_text) is not None
+
+    @staticmethod
+    def is_route_tag(tag: str) -> bool:
+        """Return True if the tag is a [ROUTE:*] tag (not COMPLETE or HANDBACK)."""
+        return tag.upper().startswith("[ROUTE:")
+
+    @staticmethod
+    def route_target(tag: str) -> str | None:
+        """
+        Extract the specialist name from a [ROUTE:X] tag.
+
+        Returns 'CFO', 'CMO', etc., or None if not a route tag.
+        """
+        match = re.match(r"\[ROUTE:([A-Z]+)\]", tag.upper())
+        return match.group(1) if match else None

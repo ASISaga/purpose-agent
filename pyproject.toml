@@ -47,6 +47,9 @@ dev = [
     "isort>=5.13.0",
 ]
 
+[project.entry-points."agent_framework.hosted_agents"]
+default = "purpose_driven_agent.agent:PurposeDrivenAgent"
+
 [project.urls]
 Homepage = "https://github.com/ASISaga/purpose-driven-agent"
 Documentation = "https://github.com/ASISaga/purpose-driven-agent/tree/main/docs"
