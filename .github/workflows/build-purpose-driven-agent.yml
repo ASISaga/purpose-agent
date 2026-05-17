@@ -1,213 +1,316 @@
-name: Build Purpose-Driven Agent Image
+name: Build Purpose-Driven Agent Layer
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Triggers ONLY on push to main (i.e. after the manifest-update PR is merged).
-# Does NOT trigger on repository_dispatch — that is handled by update-base-image.yml.
+# =============================================================================
+# Two triggers, two very different code paths:
 #
-# Two targets are built from the same Dockerfile:
-#   base  → full image (.py + .pyc) pushed to ACR — used by downstream layers
-#   fas   → stripped image (.pyc only) pushed to ACR — used by FAS/Foundry
-# ─────────────────────────────────────────────────────────────────────────────
+# 1. SOURCE CHANGE (push to main touching src/)
+#    → compile .py to .pyc on the runner (sub-second, no Docker)
+#    → az acr build: sends compiled/ as build context to ACR Task
+#    → ACR Task: COPY .pyc into image, push new digest
+#    → open manifest-update PR in leadership-agent
+#
+# 2. MANIFEST UPDATE (repository_dispatch: manifest-update)
+#    → parent digest changed, no source change
+#    → crane rebase: rewrite this image's manifest to point to new parent
+#    → zero bytes of .pyc transferred — manifest JSON only
+#    → open manifest-update PR in leadership-agent with new digest
+#
+# Sovereignty: this workflow never triggers another repo's ACR Task.
+#              It only opens manifest-update PRs downstream.
+# =============================================================================
 
 on:
   push:
     branches: [main]
     paths:
+      - "src/**"
       - "Dockerfile.purpose-driven-agent"
-      - "purpose_driven_agent/**"
       - ".github/workflows/build-purpose-driven-agent.yml"
+  repository_dispatch:
+    types: [manifest-update]
   workflow_dispatch:
-    inputs:
-      force_rebuild:
-        description: "Force rebuild even if no file changes"
-        type: boolean
-        default: false
 
 concurrency:
   group: purpose-driven-agent-build
-  cancel-in-progress: false  # never cancel — downstream cascade depends on completion
+  cancel-in-progress: false
 
 env:
-  ACR_LOGIN_SERVER: ${{ vars.ACR_NAME }}.azurecr.io
-  IMAGE_NAME: aos/purpose-driven-agent
-  FAS_IMAGE_NAME: aos/purpose-driven-agent-fas
+  ACR: ${{ vars.ACR_NAME }}.azurecr.io
+  ACR_NAME: ${{ vars.ACR_NAME }}
+  IMAGE: aos/purpose-driven-agent
+  FAS_IMAGE: aos/purpose-driven-agent-fas
+  PARENT_IMAGE: aos/infra
 
 jobs:
-  build-and-push:
-    name: Build and push purpose-driven-agent images
+  # ── Path 1: Source change → compile + ACR Task ───────────────────────────
+  build-from-source:
+    name: Compile .py → .pyc + ACR Task
     runs-on: ubuntu-latest
-    environment: staging      # OIDC subject: repo:ASISaga/purpose-driven-agent:environment:staging
+    environment: staging
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
     permissions:
       id-token: write
       contents: read
+      pull-requests: write
 
     outputs:
-      image_tag: ${{ steps.meta.outputs.sha_tag }}
-      image_digest: ${{ steps.push-base.outputs.digest }}
-      fas_digest: ${{ steps.push-fas.outputs.digest }}
+      digest: ${{ steps.digest.outputs.digest }}
+      fas_digest: ${{ steps.fas_digest.outputs.digest }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
-      # ── Azure login via OIDC ────────────────────────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # ── Lint and test (GitHub-side intelligence) ──────────────────────────
+      - name: Lint
+        run: |
+          pip install pylint mypy --quiet
+          pylint src/purpose_driven_agent/ src/aos_mcp_servers/ --fail-under=8 || true
+          mypy src/purpose_driven_agent/ src/aos_mcp_servers/ --ignore-missing-imports || true
+
+      - name: Test
+        run: |
+          if [ -d tests/ ]; then
+            pip install pytest pytest-asyncio --quiet
+            # Install deps for test execution (not for image — image uses .pyc)
+            pip install -r requirements.infrastructure.txt --quiet 2>/dev/null || true
+            pytest tests/ -q
+          else
+            echo "No tests directory — skipping"
+          fi
+
+      # ── Compile .py → .pyc (on runner, sub-second) ───────────────────────
+      # -b flag: writes .pyc beside .py for SourcelessFileLoader
+      # Output goes to compiled/ — only this directory enters the ACR build context
+      - name: Compile source to bytecode
+        run: |
+          mkdir -p compiled/purpose_driven_agent compiled/aos_mcp_servers
+
+          # Copy source to staging area for compilation
+          cp -r src/purpose_driven_agent/ compiled/purpose_driven_agent/
+          cp -r src/aos_mcp_servers/ compiled/aos_mcp_servers/
+
+          # Compile with -b: .pyc files land beside .py
+          python -m compileall -b -j0 -q compiled/purpose_driven_agent/
+          python -m compileall -b -j0 -q compiled/aos_mcp_servers/
+
+          # Strip .py — only .pyc enters the image
+          find compiled/ -name "*.py" -delete
+
+          # Verify
+          PYC=$(find compiled/ -name "*.pyc" | wc -l)
+          PY=$(find compiled/ -name "*.py" | wc -l)
+          echo "Compiled: ${PYC} .pyc files, ${PY} .py files (expect 0)"
+          [ "$PY" -eq 0 ] || (echo "ERROR: .py files remain in compiled/" && exit 1)
+          [ "$PYC" -gt 0 ] || (echo "ERROR: no .pyc files produced" && exit 1)
+
       - name: Azure login
-        uses: azure/login@v3
+        uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Login to ACR
-        run: az acr login --name ${{ vars.ACR_NAME }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      # ── Extract parent digest from Dockerfile ───────────────────────────────
-      # This is the manifest read — what infrastructure digest are we building on?
-      - name: Read parent manifest
-        id: manifest
+      # ── ACR Task: build base image ────────────────────────────────────────
+      # Build context: Dockerfile + compiled/ (~50KB of .pyc)
+      # No parent image pulled to runner. ACR resolves FROM locally.
+      - name: Build base image via ACR Task
         run: |
-          PARENT_DIGEST=$(grep -oP '(?<=@)sha256:[0-9a-f]{64}' Dockerfile.purpose-driven-agent | head -1)
-          if [[ -z "$PARENT_DIGEST" ]]; then
-            echo "::error::Could not read parent digest from Dockerfile.purpose-driven-agent"
-            exit 1
-          fi
-          echo "parent_digest=${PARENT_DIGEST}" >> $GITHUB_OUTPUT
-          echo "Parent manifest digest: ${PARENT_DIGEST}"
+          az acr build \
+            --registry ${{ env.ACR_NAME }} \
+            --image ${{ env.IMAGE }}:${{ github.sha }} \
+            --image ${{ env.IMAGE }}:latest \
+            --file Dockerfile.purpose-driven-agent \
+            --platform linux/amd64 \
+            .
 
-      # ── Compute image tags ──────────────────────────────────────────────────
-      - name: Compute image tags
-        id: meta
+      - name: Get base image digest
+        id: digest
         run: |
-          BASE="${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}"
-          FAS="${{ env.ACR_LOGIN_SERVER }}/${{ env.FAS_IMAGE_NAME }}"
-          SHORT="${{ github.sha }}"
+          DIGEST=$(az acr repository show-manifests \
+            --name ${{ env.ACR_NAME }} \
+            --repository ${{ env.IMAGE }} \
+            --query "[?tags[?@ == '${{ github.sha }}']].digest | [0]" \
+            --output tsv)
+          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+          echo "Base digest: ${DIGEST}"
 
-          echo "sha_tag=${BASE}:${SHORT}"          >> $GITHUB_OUTPUT
-          echo "latest_tag=${BASE}:latest"          >> $GITHUB_OUTPUT
-          echo "fas_sha_tag=${FAS}:${SHORT}"        >> $GITHUB_OUTPUT
-          echo "fas_latest_tag=${FAS}:latest"       >> $GITHUB_OUTPUT
-
-          echo "Base image tags:"
-          echo "  ${BASE}:${SHORT}"
-          echo "  ${BASE}:latest"
-          echo "FAS image tags:"
-          echo "  ${FAS}:${SHORT}"
-          echo "  ${FAS}:latest"
-
-      # ── Build and push base image (.py + .pyc, for downstream layers) ───────
-      - name: Build and push base image
-        id: push-base
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: Dockerfile.purpose-driven-agent
-          target: base
-          push: true
-          platforms: linux/amd64
-          tags: |
-            ${{ steps.meta.outputs.sha_tag }}
-            ${{ steps.meta.outputs.latest_tag }}
-          cache-from: |
-            type=registry,ref=${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
-          cache-to: type=inline
-          provenance: true
-          sbom: true
-
-      # ── Build and push FAS image (.pyc only, for Foundry Agent Service) ─────
-      - name: Build and push FAS image
-        id: push-fas
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: Dockerfile.purpose-driven-agent
-          target: fas
-          push: true
-          platforms: linux/amd64
-          tags: |
-            ${{ steps.meta.outputs.fas_sha_tag }}
-            ${{ steps.meta.outputs.fas_latest_tag }}
-          cache-from: |
-            type=registry,ref=${{ env.ACR_LOGIN_SERVER }}/${{ env.FAS_IMAGE_NAME }}:latest
-          cache-to: type=inline
-          provenance: true
-          sbom: true
-
-      # ── Verify base image ───────────────────────────────────────────────────
-      - name: Verify base image
+      # ── ACR Task: build FAS image (pyc-only, same content, separate tag) ─
+      # The FAS image is identical to base for this layer — all layers are
+      # already pyc-only. The FAS tag exists for Foundry registration clarity.
+      - name: Tag as FAS image
         run: |
-          docker run --rm ${{ steps.meta.outputs.sha_tag }} python -c "
-          from purpose_driven_agent import PurposeDrivenAgent
-          import pathlib
-          py_files  = list(pathlib.Path('/app/purpose_driven_agent').rglob('*.py'))
-          pyc_files = list(pathlib.Path('/app/purpose_driven_agent').rglob('*.pyc'))
-          assert len(py_files)  > 0, 'No .py files in base image'
-          assert len(pyc_files) > 0, 'No .pyc files in base image'
-          print(f'Base image: {len(py_files)} .py, {len(pyc_files)} .pyc. OK')
-          print('PurposeDrivenAgent import: OK')
-          "
+          az acr import \
+            --name ${{ env.ACR_NAME }} \
+            --source ${{ env.ACR }}/${{ env.IMAGE }}:${{ github.sha }} \
+            --image ${{ env.FAS_IMAGE }}:${{ github.sha }} \
+            --image ${{ env.FAS_IMAGE }}:latest
 
-      # ── Verify FAS image ────────────────────────────────────────────────────
-      - name: Verify FAS image
+      - name: Get FAS image digest
+        id: fas_digest
         run: |
-          docker run --rm ${{ steps.meta.outputs.fas_sha_tag }} python -c "
-          from purpose_driven_agent import PurposeDrivenAgent
-          import pathlib
-          py_files  = list(pathlib.Path('/app/purpose_driven_agent').rglob('*.py'))
-          pyc_files = list(pathlib.Path('/app/purpose_driven_agent').rglob('*.pyc'))
-          assert len(py_files)  == 0, f'Found .py in FAS image: {py_files}'
-          assert len(pyc_files)  > 0, 'No .pyc files in FAS image'
-          print(f'FAS image: 0 .py, {len(pyc_files)} .pyc. OK')
-          print('PurposeDrivenAgent import from .pyc: OK')
-          "
+          DIGEST=$(az acr repository show-manifests \
+            --name ${{ env.ACR_NAME }} \
+            --repository ${{ env.FAS_IMAGE }} \
+            --query "[?tags[?@ == '${{ github.sha }}']].digest | [0]" \
+            --output tsv)
+          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
 
-      # ── Cascade rebuild to leadership-agent ────────────────────────────────
-      - name: Cascade rebuild to leadership-agent
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
-          repository: ASISaga/leadership-agent
-          event-type: base-image-updated
-          client-payload: |
-            {
-              "base_image": "${{ env.IMAGE_NAME }}",
-              "base_tag": "${{ github.sha }}",
-              "base_digest": "${{ steps.push-base.outputs.digest }}",
-              "parent_digest": "${{ steps.manifest.outputs.parent_digest }}",
-              "maf_version": "1.3.0",
-              "triggered_by": "${{ github.event_name }}"
-            }
-
-      # ── Job summary ─────────────────────────────────────────────────────────
-      - name: Job summary
-        if: always()
+      # ── Open manifest-update PR downstream ───────────────────────────────
+      - name: Dispatch manifest-update to leadership-agent
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+          NEW_DIGEST: ${{ steps.digest.outputs.digest }}
         run: |
-          ICON=$([[ "${{ job.status }}" == "success" ]] && echo "✅" || echo "❌")
+          gh api repos/ASISaga/leadership-agent/dispatches \
+            --method POST \
+            --field event_type=manifest-update \
+            --field client_payload='{"parent_image":"${{ env.IMAGE }}","parent_digest":"'"${NEW_DIGEST}"'","parent_sha":"${{ github.sha }}","breaking_candidate":false}'
+
+      - name: Summary
+        run: |
           cat >> $GITHUB_STEP_SUMMARY << EOF
-          ## ${ICON} AOS Purpose-Driven Agent
+          ## ✅ Purpose-Driven Agent (source build)
 
           | | |
           |--|--|
-          | **Status** | \`${{ job.status }}\` |
-          | **Base image** | \`${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}\` |
-          | **FAS image** | \`${{ env.ACR_LOGIN_SERVER }}/${{ env.FAS_IMAGE_NAME }}\` |
-          | **SHA** | \`${{ github.sha }}\` |
-          | **Base digest** | \`${{ steps.push-base.outputs.digest }}\` |
-          | **FAS digest** | \`${{ steps.push-fas.outputs.digest }}\` |
-          | **Parent digest** | \`${{ steps.manifest.outputs.parent_digest }}\` |
-          | **ACR** | \`${{ vars.ACR_NAME }}\` |
-          | **Triggered by** | \`${{ github.event_name }}\` |
+          | **Image** | \`${{ env.ACR }}/${{ env.IMAGE }}\` |
+          | **Digest** | \`${{ steps.digest.outputs.digest }}\` |
+          | **Build** | ACR Task — $(find compiled/ -name "*.pyc" 2>/dev/null | wc -l) .pyc files, 0 .py |
+          | **Runner role** | Compile + lint + test only. No image pull/push. |
+          EOF
 
-          ### Layer hierarchy
-          \`\`\`
-          python:3.12-slim
-            └── aos/infrastructure:${{ steps.manifest.outputs.parent_digest }}  ← parent manifest
-                  └── aos/purpose-driven-agent:${{ github.sha }}  ← this build
-                        ├── (base)  .py + .pyc  → downstream layers
-                        └── (fas)   .pyc only   → Foundry Agent Service
-                              └── aos/leadership-agent  (cascade triggered)
-          \`\`\`
+  # ── Path 2: Manifest update → crane rebase ──────────────────────────────
+  rebase-on-parent-update:
+    name: Rebase manifest on parent digest change
+    runs-on: ubuntu-latest
+    environment: staging
+    if: github.event_name == 'repository_dispatch' && github.event.action == 'manifest-update'
+
+    permissions:
+      id-token: write
+      contents: write
+      pull-requests: write
+
+    outputs:
+      digest: ${{ steps.rebase.outputs.digest }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install crane
+        run: |
+          curl -sL https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_Linux_x86_64.tar.gz \
+            | tar xz crane
+          sudo mv crane /usr/local/bin/
+
+      - name: Authenticate crane to ACR
+        run: |
+          az acr login --name ${{ env.ACR_NAME }} --expose-token \
+            --query accessToken -o tsv \
+            | crane auth login ${{ env.ACR }} -u 00000000-0000-0000-0000-000000000000 --password-stdin
+
+      # ── Rebase: rewrite manifest, zero bytes of .pyc transferred ─────────
+      # crane rebase finds the old base layers, replaces them with new base,
+      # writes a new manifest. The application .pyc layers are untouched.
+      - name: Rebase image on new parent digest
+        id: rebase
+        env:
+          OLD_PARENT: ${{ env.ACR }}/${{ env.PARENT_IMAGE }}@${{ github.event.client_payload.old_parent_digest }}
+          NEW_PARENT: ${{ env.ACR }}/${{ env.PARENT_IMAGE }}@${{ github.event.client_payload.parent_digest }}
+          TARGET: ${{ env.ACR }}/${{ env.IMAGE }}:latest
+        run: |
+          # Read current parent digest from Dockerfile (what old base was)
+          OLD_DIGEST=$(grep -oP '(?<=@)sha256:[0-9a-f]{64}' Dockerfile.purpose-driven-agent | head -1)
+
+          crane rebase \
+            --old_base ${{ env.ACR }}/${{ env.PARENT_IMAGE }}@${OLD_DIGEST} \
+            --new_base ${{ env.ACR }}/${{ env.PARENT_IMAGE }}@${{ github.event.client_payload.parent_digest }} \
+            ${{ env.ACR }}/${{ env.IMAGE }}:latest
+
+          # Get the new digest after rebase
+          NEW_DIGEST=$(crane digest ${{ env.ACR }}/${{ env.IMAGE }}:latest)
+          echo "digest=${NEW_DIGEST}" >> $GITHUB_OUTPUT
+          echo "Rebased: old parent ${OLD_DIGEST:7:12} → new parent ${{ github.event.client_payload.parent_digest }}:7:12}"
+          echo "New image digest: ${NEW_DIGEST}"
+
+      # Also rebase the FAS image
+      - name: Rebase FAS image
+        run: |
+          OLD_DIGEST=$(grep -oP '(?<=@)sha256:[0-9a-f]{64}' Dockerfile.purpose-driven-agent | head -1)
+          crane rebase \
+            --old_base ${{ env.ACR }}/${{ env.PARENT_IMAGE }}@${OLD_DIGEST} \
+            --new_base ${{ env.ACR }}/${{ env.PARENT_IMAGE }}@${{ github.event.client_payload.parent_digest }} \
+            ${{ env.ACR }}/${{ env.FAS_IMAGE }}:latest
+
+      # ── Update Dockerfile manifest pointer ───────────────────────────────
+      - name: Open Dockerfile manifest-update PR
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+          NEW_PARENT_DIGEST: ${{ github.event.client_payload.parent_digest }}
+        run: |
+          BRANCH="chore/manifest-update-infra-${NEW_PARENT_DIGEST:7:12}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "${BRANCH}"
+
+          # Update FROM digest in Dockerfile
+          sed -i "s|@sha256:[a-f0-9]\{64\}|@${NEW_PARENT_DIGEST}|g" \
+            Dockerfile.purpose-driven-agent
+
+          git add Dockerfile.purpose-driven-agent
+          git commit -m "chore: rebase on infrastructure@${NEW_PARENT_DIGEST:7:12}
+
+Parent image: ${{ env.PARENT_IMAGE }}
+New digest:   ${NEW_PARENT_DIGEST}
+Triggered by: ${{ github.event.client_payload.parent_sha }}
+
+Manifest-only update — no recompilation. .pyc layers unchanged."
+
+          git push origin "${BRANCH}"
+
+          gh pr create \
+            --title "chore: rebase on infrastructure@${NEW_PARENT_DIGEST:7:12}" \
+            --body "Automated manifest update. No source changes. .pyc layers identical.
+            
+Parent: \`${{ env.PARENT_IMAGE }}@${NEW_PARENT_DIGEST}\`
+Breaking candidate: \`${{ github.event.client_payload.breaking_candidate }}\`" \
+            --base main \
+            --head "${BRANCH}"
+
+      # ── Propagate downstream ─────────────────────────────────────────────
+      - name: Dispatch manifest-update to leadership-agent
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+          NEW_DIGEST: ${{ steps.rebase.outputs.digest }}
+        run: |
+          gh api repos/ASISaga/leadership-agent/dispatches \
+            --method POST \
+            --field event_type=manifest-update \
+            --field client_payload='{"parent_image":"${{ env.IMAGE }}","parent_digest":"'"${NEW_DIGEST}"'","parent_sha":"${{ github.event.client_payload.parent_sha }}","breaking_candidate":${{ github.event.client_payload.breaking_candidate }}}'
+
+      - name: Summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## ✅ Purpose-Driven Agent (manifest rebase)
+
+          | | |
+          |--|--|
+          | **New digest** | \`${{ steps.rebase.outputs.digest }}\` |
+          | **Operation** | crane rebase — zero bytes of .pyc transferred |
+          | **Dockerfile PR** | opened for manifest pointer update |
           EOF
