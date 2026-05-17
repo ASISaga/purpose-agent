@@ -31,7 +31,7 @@ FROM acraosstagingerm2srfd.azurecr.io/aos/infrastructure@sha256:37c5f677d2312151
 LABEL org.opencontainers.image.title="AOS Purpose-Driven Agent"
 LABEL org.opencontainers.image.description="Layer 2: PurposeDrivenAgent — lifecycle, state machine, LLM boundary, scoring"
 LABEL org.opencontainers.image.vendor="ASI Saga"
-LABEL org.opencontainers.image.source="https://github.com/ASISaga/purpose-driven-agent"
+LABEL org.opencontainers.image.source="https://github.com/ASISaga/purpose-agent"
 LABEL aos.layer="2"
 LABEL aos.layer.name="purpose-driven-agent"
 LABEL aos.parent.digest="sha256:37c5f677d231215124d7c1de19bbace9a24b54db24906687e734c2e79c88af61"
