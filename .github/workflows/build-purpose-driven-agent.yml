@@ -80,6 +80,7 @@ jobs:
             pip install pytest pytest-asyncio --quiet
             # Install deps for test execution (not for image  image uses .pyc)
             pip install -r requirements.infrastructure.txt --quiet 2>/dev/null || true
+            export PYTHONPATH="${GITHUB_WORKSPACE}/src:${PYTHONPATH}"
             pytest tests/ -q
           else
             echo "No tests directory  skipping"
