@@ -28,11 +28,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Protocol
+from typing import Any, Callable, ClassVar, Dict, List, Optional, Protocol
 
 from purpose_driven_agent.context_provider import Context, ContextProvider
 from purpose_driven_agent.context_server import ContextMCPServer
@@ -42,6 +43,14 @@ from aos_mcp_servers.routing import (
     MCPToolDefinition,
     MCPTransportType,
 )
+
+
+# ---------------------------------------------------------------------------
+# Module-level agent registry (populated by PurposeDrivenAgent.__init_subclass__)
+# ---------------------------------------------------------------------------
+
+_AGENT_REGISTRY: dict[str, "type[PurposeDrivenAgent]"] = {}
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +215,110 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
         await agent.initialize()
         await agent.start()
     """
+
+    # ── Registry ──────────────────────────────────────────────────────────────
+    _routing_tags: ClassVar[frozenset[str]] = frozenset(
+        {"[ROUTE:CFO]", "[ROUTE:CMO]", "[COMPLETE]", "[HANDBACK]"}
+    )
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        _AGENT_REGISTRY[cls.__qualname__] = cls
+        logger.debug("Registered agent class: %s", cls.__qualname__)
+
+    @classmethod
+    def get_hosted_agent(cls) -> "type[PurposeDrivenAgent]":
+        """
+        Return the most-derived registered subclass for FAS hosting.
+
+        Priority:
+        1. Most-derived class in the registry (longest MRO = most specialised)
+        2. cls itself if no subclasses are registered
+
+        This is the fallback when importlib.metadata entry points are unavailable
+        (e.g., running from PYTHONPATH rather than as an installed package).
+        """
+        if not _AGENT_REGISTRY:
+            return cls
+        return max(_AGENT_REGISTRY.values(), key=lambda c: len(c.__mro__))
+
+    # ── Response post-processing ──────────────────────────────────────────────
+
+    def get_routing_tags(self) -> frozenset[str]:
+        """
+        Return the set of routing tags this agent is allowed to emit.
+
+        Override in subclasses to restrict or extend the tag set.
+
+        Orchestrators override to: {ROUTE:CFO, ROUTE:CMO, COMPLETE}
+        Specialists override to:   {HANDBACK}
+        """
+        return self._routing_tags
+
+    def get_default_routing_tag(self) -> str:
+        """
+        Return the tag to append when the LLM output contains no routing tag.
+
+        Must be overridden in concrete agent subclasses.
+        Raises NotImplementedError if not overridden — forces explicit declaration.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement get_default_routing_tag(). "
+            "Orchestrators return '[COMPLETE]'; specialists return '[HANDBACK]'."
+        )
+
+    def enforce_routing_tag(self, response_text: str) -> str:
+        """
+        Ensure the response ends with exactly one valid routing tag.
+
+        Algorithm:
+        1. Scan the last 120 characters of the response for a known tag.
+        2. If found and valid for this agent — return unchanged.
+        3. If found but invalid for this agent — replace with default tag.
+        4. If not found — append default tag on a new line.
+
+        This method is called by the FAS hosting adapter after every LLM
+        response, before the result is returned to the Foundry workflow.
+
+        Args:
+            response_text: The raw LLM response string.
+
+        Returns:
+            The response string guaranteed to end with a valid routing tag.
+        """
+        allowed = self.get_routing_tags()
+        default = self.get_default_routing_tag()
+
+        # Scan tail of response for any routing tag
+        tail = response_text[-120:] if len(response_text) > 120 else response_text
+        found_tag: str | None = None
+        for tag in self._routing_tags:
+            if tag.upper() in tail.upper():
+                found_tag = tag
+                break
+
+        if found_tag is None:
+            # No tag present — append default
+            logger.warning(
+                "%s LLM output missing routing tag; appending default '%s'",
+                type(self).__name__,
+                default,
+            )
+            return response_text.rstrip() + f"\n{default}"
+
+        if found_tag not in allowed:
+            # Tag present but not valid for this agent type
+            logger.warning(
+                "%s emitted disallowed tag '%s'; replacing with '%s'",
+                type(self).__name__,
+                found_tag,
+                default,
+            )
+            pattern = re.compile(re.escape(found_tag), re.IGNORECASE)
+            return pattern.sub(default, response_text)
+
+        # Valid tag present — return unchanged
+        return response_text
 
     def __init__(
         self,

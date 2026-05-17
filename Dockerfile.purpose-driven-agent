@@ -38,6 +38,8 @@ LABEL aos.parent.digest="sha256:37c5f677d231215124d7c1de19bbace9a24b54db24906687
 
 WORKDIR /app
 
+ENV PYTHONPATH=/app
+
 # ── Copy this layer's Python source ──────────────────────────────────────────
 # Only .py files from THIS repo. Parent .py files are already present via FROM.
 # Directory structure mirrors the AOS package layout.
@@ -62,6 +64,8 @@ RUN python -m compileall -b -j0 -q ./purpose_driven_agent/ ./aos_mcp_servers/
 # ── Smoke test ────────────────────────────────────────────────────────────────
 RUN <<EOF python
 from purpose_driven_agent import PurposeDrivenAgent
+from purpose_driven_agent.hosting import _discover_agent_class
+from aos_mcp_servers.routing import RoutingClassifier
 print('PurposeDrivenAgent import: OK')
 print('Layer 2 smoke test passed.')
 EOF
@@ -80,8 +84,9 @@ RUN find /app/purpose_driven_agent /app/aos_mcp_servers -name "*.py" -delete \
 # Verify .pyc files are present, .py files are gone, and the package imports correctly.
 RUN <<EOF python
 import pathlib
-pyc = list(pathlib.Path('/app/purpose_driven_agent').rglob('*.pyc'))
-py  = list(pathlib.Path('/app/purpose_driven_agent').rglob('*.py'))
+pyc = list(pathlib.Path('/app').rglob('*.pyc'))
+py  = list(pathlib.Path('/app/purpose_driven_agent').rglob('*.py')) + \
+      list(pathlib.Path('/app/aos_mcp_servers').rglob('*.py'))
 assert len(pyc) > 0, 'No .pyc files found — compilation failed'
 assert len(py)  == 0, f'Found .py files in FAS image: {py}'
 print(f'FAS stage: {len(pyc)} .pyc files, 0 .py files. OK')
