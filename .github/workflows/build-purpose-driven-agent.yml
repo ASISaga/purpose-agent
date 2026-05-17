@@ -245,8 +245,9 @@ jobs:
           # Get the new digest after rebase
           NEW_DIGEST=$(crane digest ${{ env.ACR }}/${{ env.IMAGE }}:latest)
           NEW_PARENT_DIGEST="${{ github.event.client_payload.parent_digest }}"
+          NEW_PARENT_SHORT=$(echo "${NEW_PARENT_DIGEST}" | cut -c 8-19)
           echo "digest=${NEW_DIGEST}" >> $GITHUB_OUTPUT
-          echo "Rebased: old parent ${OLD_DIGEST:7:12} -> new parent ${NEW_PARENT_DIGEST:7:12}"
+          echo "Rebased: old parent ${OLD_DIGEST:7:12} -> new parent ${NEW_PARENT_SHORT}"
           echo "New image digest: ${NEW_DIGEST}"
 
       # Also rebase the FAS image
