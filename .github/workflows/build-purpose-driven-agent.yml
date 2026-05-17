@@ -12,7 +12,7 @@ name: Build Purpose-Driven Agent Layer
 # 2. MANIFEST UPDATE (repository_dispatch: manifest-update)
 #     parent digest changed, no source change
 #     crane rebase: rewrite this image's manifest to point to new parent
-#     zero bytes of .pyc transferred  manifest JSON only
+#     zero bytes of .pyc transferred -- manifest JSON only
 #     open manifest-update PR in leadership-agent with new digest
 #
 # Sovereignty: this workflow never triggers another repo's ACR Task.
@@ -245,7 +245,7 @@ jobs:
           # Get the new digest after rebase
           NEW_DIGEST=$(crane digest ${{ env.ACR }}/${{ env.IMAGE }}:latest)
           NEW_PARENT_DIGEST="${{ github.event.client_payload.parent_digest }}"
-          # Digest format is "sha256:<64 hex>"; cut 8-19 keeps the same 12-char short id as ${VAR:7:12}.
+          # Digest format is "sha256:<64 hex>"; cut 8-19 extracts a 12-char short id (same as ${VAR:7:12}).
           NEW_PARENT_SHORT=$(echo "${NEW_PARENT_DIGEST}" | cut -c 8-19)
           echo "digest=${NEW_DIGEST}" >> $GITHUB_OUTPUT
           echo "Rebased: old parent ${OLD_DIGEST:7:12} -> new parent ${NEW_PARENT_SHORT}"
@@ -286,11 +286,16 @@ jobs:
 
           git push origin "${BRANCH}"
 
+          PR_BODY=$(cat <<EOF
+          Automated manifest update. No source changes. .pyc layers identical.
+          Parent: \`${{ env.PARENT_IMAGE }}@${NEW_PARENT_DIGEST}\`
+          Breaking candidate: \`${{ github.event.client_payload.breaking_candidate }}\`
+          EOF
+          )
+
           gh pr create \
             --title "chore: rebase on infrastructure@${SHORT_NEW_PARENT_DIGEST}" \
-            --body "Automated manifest update. No source changes. .pyc layers identical.
-            Parent: \`${{ env.PARENT_IMAGE }}@${NEW_PARENT_DIGEST}\`
-            Breaking candidate: \`${{ github.event.client_payload.breaking_candidate }}\`" \
+            --body "${PR_BODY}" \
             --base main \
             --head "${BRANCH}"
 
