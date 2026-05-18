@@ -18,8 +18,9 @@
 # Rebase: when parent digest changes (non-breaking bump), this image is
 #         remanifested via crane rebase — no recompilation, no ACR Task.
 # =============================================================================
-
-FROM acraosstagingerm2srfd.azurecr.io/aos/infra@sha256:37c5f677d231215124d7c1de19bbace9a24b54db24906687e734c2e79c88af61
+ARG INFRA_IMAGE
+ARG INFRA_DIGEST
+FROM ${INFRA_IMAGE}@${INFRA_DIGEST}
 
 LABEL org.opencontainers.image.title="AOS Purpose-Driven Agent"
 LABEL org.opencontainers.image.description="Layer 2: PurposeDrivenAgent — compiled bytecode only"
