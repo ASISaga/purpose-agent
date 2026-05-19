@@ -36,12 +36,14 @@ def _discover_agent_class() -> type:
         matches = [ep for ep in eps if ep.name == entry_point_name]
         if matches:
             agent_class = matches[0].load()
+            if not isinstance(agent_class, type):
+                raise TypeError(f"Entry point '{entry_point_name}' did not resolve to a class")
             logger.info(
                 "Discovered agent class via entry point '%s': %s",
                 entry_point_name,
                 agent_class.__qualname__,
             )
-            return agent_class  # type: ignore[return-value]
+            return agent_class
     except Exception as exc:
         logger.debug("Entry point discovery failed: %s", exc)
 
@@ -127,11 +129,11 @@ def run_server() -> None:
     # - register() takes an agent instance
     # - serve() starts the HTTP server (blocks)
     try:
-        from azure.ai.agentserver import AgentServer  # type: ignore[import]
+        from azure.ai.agentserver import AgentServer
     except ImportError:
         # Try alternate import path used by some versions of the hosting package
         try:
-            from azure.ai.agent_server import AgentServer  # type: ignore[import]
+            from azure.ai.agent_server import AgentServer
         except ImportError as exc:
             logger.error(
                 "Cannot import AgentServer from azure.ai.agentserver or "
