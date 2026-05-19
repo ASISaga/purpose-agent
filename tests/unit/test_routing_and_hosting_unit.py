@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import ClassVar
 
 from aos_mcp_servers.routing import ROUTING_TAGS, RoutingClassifier
@@ -15,7 +14,7 @@ from purpose_driven_agent.routing_mixin import RoutingMixin
 class DummyOrchestrator(PurposeDrivenAgent):
     """Concrete test double for tag-enforcement unit tests."""
 
-    _allowed: ClassVar[frozenset[str]] = frozenset({"[ROUTE:CFO]", "[COMPLETE]"})
+    _allowed_routing_tags: ClassVar[frozenset[str]] = frozenset({"[ROUTE:CFO]", "[COMPLETE]"})
 
     def get_agent_type(self) -> list[str]:
         return ["dummy"]
@@ -24,7 +23,7 @@ class DummyOrchestrator(PurposeDrivenAgent):
         return "[COMPLETE]"
 
     def get_routing_tags(self) -> frozenset[str]:
-        return self._allowed
+        return self._allowed_routing_tags
 
 
 class SpecialistRoutingMixin(RoutingMixin):
@@ -118,7 +117,3 @@ class TestHostingDiscovery:
 
         discovered = hosting._discover_agent_class()
         assert discovered is PurposeDrivenAgent
-
-
-def teardown_module() -> None:
-    os.environ.pop("AGENT_ENTRY_POINT", None)

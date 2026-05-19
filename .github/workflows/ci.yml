@@ -3,6 +3,9 @@ name: CI
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   unit-tests:
     name: Unit tests (Python ${{ matrix.python-version }})
