@@ -841,7 +841,7 @@ def create_subconscious_provider(
             ``pip install agent-framework`` or ``pip install purpose-driven-agent[azure]``.
     """
     try:
-        from agent_framework import MCPStreamableHTTPTool  # type: ignore[import-untyped]
+        from agent_framework import MCPStreamableHTTPTool
     except ImportError as exc:  # pragma: no cover
         raise ImportError(
             "agent-framework is required for create_subconscious_provider(). "
@@ -933,7 +933,7 @@ def create_subconscious_schema_provider(
             ``pip install agent-framework`` or ``pip install purpose-driven-agent[azure]``.
     """
     try:
-        from agent_framework import MCPStreamableHTTPTool  # type: ignore[import-untyped]
+        from agent_framework import MCPStreamableHTTPTool
     except ImportError as exc:  # pragma: no cover
         raise ImportError(
             "agent-framework is required for create_subconscious_schema_provider(). "

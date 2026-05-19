@@ -33,7 +33,7 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, ClassVar, Dict, List, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Optional, Protocol
 
 from purpose_driven_agent.context_provider import Context, ContextProvider
 from purpose_driven_agent.context_server import ContextMCPServer
@@ -118,17 +118,25 @@ class A2AAgentTool:
 # Optional agent_framework integration
 # ---------------------------------------------------------------------------
 
-try:
-    from agent_framework import Agent as _AgentFrameworkBase  # type: ignore[import]
+_AGENT_FRAMEWORK_AVAILABLE = False
 
-    _AGENT_FRAMEWORK_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    # Stub base class when agent_framework package is not installed.
-    # Install via:  pip install agent-framework>=1.0.0
-    class _AgentFrameworkBase:  # type: ignore[no-redef]  # pylint: disable=too-few-public-methods
-        """Stub for agent_framework.Agent when the package is not available."""
+if TYPE_CHECKING:
+    class _AgentFrameworkBase:  # pylint: disable=too-few-public-methods
+        """Type-checking stub for ``agent_framework.Agent``."""
 
-    _AGENT_FRAMEWORK_AVAILABLE = False
+        def __init__(self, *args: Any, **kwargs: Any) -> None: ...
+else:
+    try:
+        from agent_framework import Agent as _AgentFrameworkBase
+
+        _AGENT_FRAMEWORK_AVAILABLE = True
+    except ImportError:  # pragma: no cover
+        # Stub base class when agent_framework package is not installed.
+        # Install via:  pip install agent-framework>=1.0.0
+        class _AgentFrameworkBase:  # type: ignore[no-redef]  # pylint: disable=too-few-public-methods
+            """Stub for agent_framework.Agent when the package is not available."""
+
+        _AGENT_FRAMEWORK_AVAILABLE = False
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +178,18 @@ class MCPServerProtocol(Protocol):
     async def call_tool(self, tool_name: str, params: Dict[str, Any]) -> Any:
         """Invoke *tool_name* with *params* and return the result."""
         ...  # pragma: no cover
+
+
+class AOSProtocol(Protocol):
+    """Minimal protocol used by persona helper methods."""
+
+    def get_available_personas(self) -> List[str]:
+        """Return available persona names."""
+        ...
+
+    def validate_personas(self, personas: List[str]) -> bool:
+        """Validate that persona names are available."""
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +352,7 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
         system_message: Optional[str] = None,
         adapter_name: Optional[str] = None,
         config: Optional[Dict[str, Any]] = None,
-        aos: Optional[Any] = None,
+        aos: Optional[AOSProtocol] = None,
         ml_service: Optional[IMLService] = None,
         context_provider: Optional[ContextProvider] = None,
     ) -> None:
@@ -405,7 +425,7 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
         self.adapter_name: Optional[str] = adapter_name
         self.is_running: bool = False
         self.sleep_mode: bool = True
-        self.event_subscriptions: Dict[str, List[Callable]] = {}
+        self.event_subscriptions: Dict[str, List[Callable[..., Any]]] = {}
         self.wake_count: int = 0
         self.total_events_processed: int = 0
 
@@ -1703,12 +1723,12 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
         Returns:
             List of server names that were activated.
         """
-        event_tags: set = set(event.get("tags", []))
+        event_tags: set[str] = set(event.get("tags", []))
         event_type: str = event.get("type", "")
         activated: List[str] = []
 
         for name, entry in self.mcp_servers.items():
-            server_tags: set = set(entry["tags"])
+            server_tags: set[str] = set(entry["tags"])
             if (
                 not event_tags  # no filter: enable all registered servers
                 or bool(event_tags & server_tags)  # tag overlap
