@@ -107,6 +107,7 @@ class TestHostingDiscovery:
             def get_default_routing_tag(self) -> str:
                 return "[COMPLETE]"
 
+        monkeypatch.setattr(agent_module, "_AGENT_REGISTRY", {"RegistryAgent": RegistryAgent})
         discovered = hosting._discover_agent_class()
         assert discovered is RegistryAgent
 
