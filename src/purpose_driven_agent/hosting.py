@@ -16,7 +16,6 @@ import importlib.metadata
 import logging
 import os
 import sys
-from typing import cast
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +43,7 @@ def _discover_agent_class() -> type:
                 entry_point_name,
                 agent_class.__qualname__,
             )
-            return cast(type, agent_class)
+            return agent_class
     except Exception as exc:
         logger.debug("Entry point discovery failed: %s", exc)
 
