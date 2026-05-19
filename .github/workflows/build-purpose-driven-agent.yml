@@ -18,6 +18,9 @@ concurrency:
 
 jobs:
   build:
+    permissions:
+      id-token: write
+      contents: read
     uses: ASISaga/aos-infra/.github/workflows/aos-agent-build.yml@main
     with:
       trigger:         "${{ github.event_name == 'repository_dispatch' && 'rebase' || 'source-change' }}"
@@ -32,7 +35,11 @@ jobs:
       extra_src_paths: "src/aos_mcp_servers"
       parent_digest:   "${{ github.event.client_payload.parent_digest || '' }}"
       breaking_candidate: "${{ github.event.client_payload.breaking_candidate || 'false' }}"
-    secrets: inherit
+    secrets:
+      AZURE_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      DEPLOY_DISPATCH_TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
 
   dispatch-downstream:
     needs: build
