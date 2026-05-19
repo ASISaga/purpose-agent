@@ -610,6 +610,13 @@ class TestAgentFrameworkMCPServerAdapter:
 
 
 class TestCreateSubconsciousProvider:
+    @pytest.fixture(autouse=True)
+    def _require_agent_framework(self) -> None:
+        pytest.importorskip(
+            "agent_framework",
+            reason="agent_framework is required for create_subconscious_provider factory tests",
+        )
+
     def test_subconscious_mcp_url_constant(self) -> None:
         assert SUBCONSCIOUS_MCP_URL == "https://subconscious.asisaga.com/mcp"
 
@@ -860,6 +867,13 @@ class TestSubconsciousSchemaContextProvider:
 
 
 class TestCreateSubconsciousSchemaProvider:
+    @pytest.fixture(autouse=True)
+    def _require_agent_framework(self) -> None:
+        pytest.importorskip(
+            "agent_framework",
+            reason="agent_framework is required for create_subconscious_schema_provider factory tests",
+        )
+
     def test_create_returns_schema_provider(self) -> None:
         provider = create_subconscious_schema_provider(
             schema_name="manas", context_id="cmo"
@@ -1707,4 +1721,3 @@ class TestAgentRemainingSubconsciousMethods:
     ) -> None:
         with pytest.raises(RuntimeError, match="subconscious MCP server"):
             await agent.complete_orchestration(orchestration_id="orch-1")
-
