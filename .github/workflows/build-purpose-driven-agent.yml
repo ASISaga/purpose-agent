@@ -56,4 +56,4 @@ jobs:
           gh api repos/ASISaga/leadership-agent/dispatches \
             --method POST \
             --field event_type=manifest-update \
-            --field client_payload="{\"parent_image\":\"aos/purpose-driven-agent\",\"parent_digest\":\"${DIGEST}\",\"parent_sha\":\"${SHA}\",\"breaking_candidate\":\"false\"}"
+            --raw-field client_payload="{\"parent_image\":\"aos/purpose-driven-agent\",\"parent_digest\":\"${DIGEST}\",\"parent_sha\":\"${SHA}\",\"breaking_candidate\":\"false\"}"
