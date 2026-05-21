@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from aos_mcp_servers.routing import ROUTING_TAGS, RoutingClassifier
+from purpose_driven_agent._aos_mcp_servers.routing import ROUTING_TAGS, RoutingClassifier
 from purpose_driven_agent import agent as agent_module
 from purpose_driven_agent import hosting
 from purpose_driven_agent.agent import PurposeDrivenAgent

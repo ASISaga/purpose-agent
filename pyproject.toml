@@ -57,7 +57,7 @@ Repository = "https://github.com/ASISaga/purpose-driven-agent"
 Issues = "https://github.com/ASISaga/purpose-driven-agent/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/purpose_driven_agent", "src/aos_mcp_servers"]
+packages = ["src/purpose_driven_agent"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
