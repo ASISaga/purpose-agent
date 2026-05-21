@@ -53,7 +53,12 @@ jobs:
           DIGEST: ${{ needs.build.outputs.digest }}
           SHA: ${{ github.sha }}
         run: |
-          gh api repos/ASISaga/leadership-agent/dispatches \
+          jq -n \
+            --arg pi "aos/purpose-driven-agent" \
+            --arg pd "${DIGEST}" \
+            --arg ps "${SHA}" \
+            --arg bc "false" \
+            '{event_type:"manifest-update",client_payload:{parent_image:$pi,parent_digest:$pd,parent_sha:$ps,breaking_candidate:$bc}}' \
+          | gh api repos/ASISaga/leadership-agent/dispatches \
             --method POST \
-            --field event_type=manifest-update \
-            --raw-field client_payload="{\"parent_image\":\"aos/purpose-driven-agent\",\"parent_digest\":\"${DIGEST}\",\"parent_sha\":\"${SHA}\",\"breaking_candidate\":\"false\"}"
+            --input -
