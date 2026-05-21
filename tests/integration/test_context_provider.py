@@ -552,7 +552,7 @@ class TestAgentFrameworkMCPServerAdapter:
 
     @pytest.mark.asyncio
     async def test_adapter_list_tools_returns_empty(self) -> None:
-        from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+        from purpose_driven_agent._aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
 
         adapter = AgentFrameworkMCPServerAdapter(self._make_real_tool_stub())
         tools = await adapter.list_tools()
@@ -560,7 +560,7 @@ class TestAgentFrameworkMCPServerAdapter:
 
     @pytest.mark.asyncio
     async def test_adapter_calls_connect_on_first_call_tool(self) -> None:
-        from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+        from purpose_driven_agent._aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
 
         fake_tool = self._make_real_tool_stub()
         adapter = AgentFrameworkMCPServerAdapter(fake_tool)
@@ -570,7 +570,7 @@ class TestAgentFrameworkMCPServerAdapter:
 
     @pytest.mark.asyncio
     async def test_adapter_does_not_reconnect_on_second_call(self) -> None:
-        from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+        from purpose_driven_agent._aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
 
         class CountingTool:
             connect_count = 0
@@ -587,7 +587,7 @@ class TestAgentFrameworkMCPServerAdapter:
 
     @pytest.mark.asyncio
     async def test_adapter_translates_params_dict_to_kwargs(self) -> None:
-        from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+        from purpose_driven_agent._aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
 
         fake_tool = self._make_real_tool_stub()
         adapter = AgentFrameworkMCPServerAdapter(fake_tool)
@@ -596,7 +596,7 @@ class TestAgentFrameworkMCPServerAdapter:
 
     @pytest.mark.asyncio
     async def test_adapter_returns_tool_output(self) -> None:
-        from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+        from purpose_driven_agent._aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
 
         fake_tool = self._make_real_tool_stub("conversation history")
         adapter = AgentFrameworkMCPServerAdapter(fake_tool)
@@ -650,7 +650,7 @@ class TestCreateSubconsciousProvider:
         assert provider.limit == 50
 
     def test_create_custom_mcp_url(self) -> None:
-        from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+        from purpose_driven_agent._aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
 
         provider = create_subconscious_provider(
             orchestration_id="orch-cmo-q2", mcp_url="https://staging.asisaga.com/mcp"
@@ -660,7 +660,7 @@ class TestCreateSubconsciousProvider:
         assert adapter._tool.url == "https://staging.asisaga.com/mcp"
 
     def test_create_mcp_server_is_adapter(self) -> None:
-        from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+        from purpose_driven_agent._aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
 
         provider = create_subconscious_provider(orchestration_id="orch-cmo-q2")
         assert isinstance(provider.mcp_server, AgentFrameworkMCPServerAdapter)
@@ -893,7 +893,7 @@ class TestCreateSubconsciousSchemaProvider:
         assert provider.context_id == "cto"
 
     def test_create_mcp_server_is_adapter(self) -> None:
-        from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+        from purpose_driven_agent._aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
 
         provider = create_subconscious_schema_provider(
             schema_name="manas", context_id="cmo"
@@ -911,7 +911,7 @@ class TestCreateSubconsciousSchemaProvider:
         assert adapter._tool.url == SUBCONSCIOUS_MCP_URL
 
     def test_create_custom_mcp_url(self) -> None:
-        from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+        from purpose_driven_agent._aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
 
         provider = create_subconscious_schema_provider(
             schema_name="manas",

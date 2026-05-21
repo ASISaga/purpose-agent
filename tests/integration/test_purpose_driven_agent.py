@@ -17,7 +17,7 @@ import pytest
 
 from purpose_driven_agent import GenericPurposeDrivenAgent, PurposeDrivenAgent
 from purpose_driven_agent.context_server import ContextMCPServer
-from aos_mcp_servers.routing import (
+from purpose_driven_agent._aos_mcp_servers.routing import (
     MCPStdioTool,
     MCPStreamableHTTPTool,
     MCPToolDefinition,

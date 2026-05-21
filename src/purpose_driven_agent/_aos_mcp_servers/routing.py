@@ -1,5 +1,5 @@
 """
-aos_mcp_servers.routing — MCP transport routing implementations.
+purpose_driven_agent._aos_mcp_servers.routing — MCP transport routing implementations.
 
 Defines transport-layer abstractions for connecting agents to MCP (Model
 Context Protocol) servers. Each class wraps a specific transport and exposes
@@ -60,7 +60,7 @@ class MCPStdioTool:
 
     Example::
 
-        from aos_mcp_servers.routing import MCPStdioTool, MCPToolDefinition
+        from purpose_driven_agent._aos_mcp_servers.routing import MCPStdioTool, MCPToolDefinition
 
         server = MCPStdioTool(
             command="python",
@@ -126,7 +126,7 @@ class MCPStreamableHTTPTool:
 
     Example::
 
-        from aos_mcp_servers.routing import MCPStreamableHTTPTool, MCPToolDefinition
+        from purpose_driven_agent._aos_mcp_servers.routing import MCPStreamableHTTPTool, MCPToolDefinition
 
         server = MCPStreamableHTTPTool(
             url="https://api.example.com/mcp",
@@ -186,7 +186,7 @@ class MCPWebsocketTool:
 
     Example::
 
-        from aos_mcp_servers.routing import MCPWebsocketTool, MCPToolDefinition
+        from purpose_driven_agent._aos_mcp_servers.routing import MCPWebsocketTool, MCPToolDefinition
 
         server = MCPWebsocketTool(
             url="wss://rt.example.com/mcp",
@@ -259,7 +259,7 @@ class AgentFrameworkMCPServerAdapter:
     Example::
 
         from agent_framework import MCPStreamableHTTPTool
-        from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+        from purpose_driven_agent._aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
 
         real_tool = MCPStreamableHTTPTool(
             name="subconscious",
