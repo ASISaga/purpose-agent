@@ -26,7 +26,7 @@ def create_subconscious_provider(
 
     Uses ``agent_framework.MCPStreamableHTTPTool`` (the real Microsoft Agent
     Framework HTTP transport) wrapped in an
-    :class:`~aos_mcp_servers.routing.AgentFrameworkMCPServerAdapter` that
+    :class:`~purpose_driven_agent._aos_mcp_servers.routing.AgentFrameworkMCPServerAdapter` that
     adapts its ``**kwargs`` calling convention to the
     :class:`~purpose_driven_agent.MCPServerProtocol` interface expected by
     :class:`SubconsciousContextProvider`.
@@ -109,7 +109,7 @@ def create_subconscious_schema_provider(
 
     Uses ``agent_framework.MCPStreamableHTTPTool`` (the real Microsoft Agent
     Framework HTTP transport) wrapped in an
-    :class:`~aos_mcp_servers.routing.AgentFrameworkMCPServerAdapter` that
+    :class:`~purpose_driven_agent._aos_mcp_servers.routing.AgentFrameworkMCPServerAdapter` that
     adapts its ``**kwargs`` calling convention to the
     :class:`~purpose_driven_agent.MCPServerProtocol` interface expected by
     :class:`SubconsciousSchemaContextProvider`.

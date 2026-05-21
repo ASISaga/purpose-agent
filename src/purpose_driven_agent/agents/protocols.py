@@ -13,10 +13,11 @@ class MCPServerProtocol(Protocol):
     satisfies this protocol and can be registered via
     :meth:`PurposeDrivenAgent.register_mcp_server`.
 
-    The three concrete transport classes — :class:`~aos_mcp_servers.routing.MCPStdioTool`,
-    :class:`~aos_mcp_servers.routing.MCPStreamableHTTPTool`, and
-    :class:`~aos_mcp_servers.routing.MCPWebsocketTool` — all satisfy this
-    protocol.  They are defined in the ``aos-mcp-servers`` package.
+    The three concrete transport classes —
+    :class:`~purpose_driven_agent._aos_mcp_servers.routing.MCPStdioTool`,
+    :class:`~purpose_driven_agent._aos_mcp_servers.routing.MCPStreamableHTTPTool`,
+    and :class:`~purpose_driven_agent._aos_mcp_servers.routing.MCPWebsocketTool`
+    — all satisfy this protocol. They are internal to ``purpose_driven_agent``.
 
     The :class:`~aos_client.mcp.MCPServerConfig` Pydantic model (from
     ``aos-client-sdk``) describes these servers declaratively for use in
@@ -32,7 +33,9 @@ class MCPServerProtocol(Protocol):
         tool-name → server-name routing index.
 
         Returns:
-            List of :class:`~purpose_driven_agent.mcp_routing.MCPToolDefinition` objects.
+            List of
+            :class:`~purpose_driven_agent._aos_mcp_servers.routing.MCPToolDefinition`
+            objects.
         """
         ...  # pragma: no cover
 

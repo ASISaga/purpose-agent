@@ -21,10 +21,8 @@ Client SDK (``aos_client.mcp``)::
     from aos_client import MCPServerConfig, MCPTransportType
     from aos_client.mcp import MCPToolDefinition
 
-MCP transport connection classes (runtime implementations) are in
-``aos_mcp_servers.routing``::
-
-    from purpose_driven_agent._aos_mcp_servers.routing import MCPStdioTool, MCPStreamableHTTPTool, MCPWebsocketTool
+MCP transport connection classes are now internal implementation details under
+``purpose_driven_agent._aos_mcp_servers`` and are not part of the public API.
 """
 
 from purpose_driven_agent.agent import (

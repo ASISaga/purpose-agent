@@ -8,7 +8,9 @@ from typing import Any, Dict, List
 class Context:
     """Structured context object injected into the agent's LLM reasoning loop.
 
-    Returned by :meth:`ContextProvider.get_context` and stored in the agent's
+    Returned by
+    :meth:`purpose_driven_agent.context_providers.provider.ContextProvider.get_context`
+    and stored in the agent's
     :class:`~purpose_driven_agent.ContextMCPServer` before each reasoning cycle.
 
     Attributes:
