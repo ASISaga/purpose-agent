@@ -31,7 +31,6 @@ jobs:
       package_dir:     "purpose_driven_agent"
       repo_name:       "ASISaga/purpose-driven-agent"
       src_path:        "src/purpose_driven_agent"
-      extra_src_paths: "src/aos_mcp_servers"
       parent_digest:   "${{ github.event.client_payload.parent_digest || '' }}"
       breaking_candidate: "${{ github.event.client_payload.breaking_candidate || 'false' }}"
     secrets:
