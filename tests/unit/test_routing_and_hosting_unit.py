@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 from purpose_driven_agent._aos_mcp_servers.routing import ROUTING_TAGS, RoutingClassifier
-from purpose_driven_agent import agent as agent_module
+from purpose_driven_agent.agents import purpose_driven_agent as purpose_agent_module
 from purpose_driven_agent import hosting
 from purpose_driven_agent.agent import PurposeDrivenAgent
 from purpose_driven_agent.routing_mixin import RoutingMixin
@@ -106,14 +106,18 @@ class TestHostingDiscovery:
             def get_default_routing_tag(self) -> str:
                 return "[COMPLETE]"
 
-        monkeypatch.setattr(agent_module, "_AGENT_REGISTRY", {"RegistryAgent": RegistryAgent})
+        monkeypatch.setattr(
+            purpose_agent_module,
+            "_AGENT_REGISTRY",
+            {"RegistryAgent": RegistryAgent},
+        )
         discovered = hosting._discover_agent_class()
         assert discovered is RegistryAgent
 
     def test_discover_agent_class_returns_base_when_registry_empty(self, monkeypatch) -> None:
         monkeypatch.setenv("AGENT_ENTRY_POINT", "missing")
         monkeypatch.setattr(hosting.importlib.metadata, "entry_points", lambda group=None: [])
-        monkeypatch.setattr(agent_module, "_AGENT_REGISTRY", {})
+        monkeypatch.setattr(purpose_agent_module, "_AGENT_REGISTRY", {})
 
         discovered = hosting._discover_agent_class()
         assert discovered is PurposeDrivenAgent
