@@ -50,8 +50,10 @@ jobs:
       - name: Dispatch manifest-update to leadership-agent
         env:
           GH_TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+          SHA: ${{ github.sha }}
         run: |
           gh api repos/ASISaga/leadership-agent/dispatches \
             --method POST \
             --field event_type=manifest-update \
-            --field client_payload='{"parent_image":"aos/purpose-driven-agent","parent_digest":"${{ needs.build.outputs.digest }}","parent_sha":"${{ github.sha }}","breaking_candidate":"false"}'
+            --field client_payload="{\"parent_image\":\"aos/purpose-driven-agent\",\"parent_digest\":\"${DIGEST}\",\"parent_sha\":\"${SHA}\",\"breaking_candidate\":\"false\"}"
