@@ -192,13 +192,7 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
         allowed = self.get_routing_tags()
         default = self.get_default_routing_tag()
 
-        # Scan tail of response for any routing tag
-        tail = response_text[-200:] if len(response_text) > 200 else response_text
-        found_tag: str | None = None
-        for tag in self._routing_tags:
-            if tag.upper() in tail.upper():
-                found_tag = tag
-                break
+        found_tag = self._scan_tail_for_tag(response_text)
 
         if found_tag is None:
             # No tag present — append default
@@ -222,6 +216,17 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
 
         # Valid tag present — return unchanged
         return response_text
+
+    def _scan_tail_for_tag(self, text: str) -> str | None:
+        """Scan the last 200 characters of *text* for any known routing tag.
+
+        Returns the first matching tag in canonical form, or ``None``.
+        """
+        tail = text[-200:] if len(text) > 200 else text
+        for tag in self._routing_tags:
+            if tag.upper() in tail.upper():
+                return tag
+        return None
 
     def __init__(
         self,
@@ -1327,11 +1332,8 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
         Returns:
             Routing tag string (e.g. ``"[COMPLETE]"``).
         """
-        tail = text[-200:] if len(text) > 200 else text
-        for tag in self._routing_tags:
-            if tag.upper() in tail.upper():
-                return tag
-        return self.get_default_routing_tag()
+        found = self._scan_tail_for_tag(text)
+        return found if found is not None else self.get_default_routing_tag()
 
     # ------------------------------------------------------------------
     # Messaging

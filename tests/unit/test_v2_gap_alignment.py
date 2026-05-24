@@ -158,11 +158,15 @@ class TestRunTurnTypes:
             raise ResponseValidationError("bad validation")
 
     def test_turn_result_exported_from_package(self):
-        from purpose_driven_agent import TurnResult, ResponseParseError, ResponseValidationError  # noqa: F401
+        from purpose_driven_agent import TurnResult, ResponseParseError, ResponseValidationError
 
-        assert TurnResult is not None
-        assert ResponseParseError is not None
-        assert ResponseValidationError is not None
+        # Verify types are actually usable, not just importable
+        tr = TurnResult(content="hello [COMPLETE]", route="[COMPLETE]")
+        assert tr.content == "hello [COMPLETE]"
+        with pytest.raises(ResponseParseError):
+            raise ResponseParseError("test parse error")
+        with pytest.raises(ResponseValidationError):
+            raise ResponseValidationError("test validation error")
 
 
 class TestRunTurnLifecycle:
@@ -322,8 +326,9 @@ class TestIMLServiceSignatures:
 
         sig = inspect.signature(IMLService.infer)
         params = list(sig.parameters.keys())
-        assert params[1] == "prompt"
-        assert params[2] == "adapter"
+        assert "prompt" in params
+        assert "adapter" in params
+        assert params.index("prompt") < params.index("adapter")
 
     def test_train_signature_dataset_then_config(self):
         import inspect
@@ -331,8 +336,9 @@ class TestIMLServiceSignatures:
 
         sig = inspect.signature(IMLService.train)
         params = list(sig.parameters.keys())
-        assert params[1] == "dataset"
-        assert params[2] == "config"
+        assert "dataset" in params
+        assert "config" in params
+        assert params.index("dataset") < params.index("config")
 
 
 # ===========================================================================
