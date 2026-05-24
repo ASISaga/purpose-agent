@@ -14,6 +14,9 @@ Exports:
     SubconsciousSchemaContextProvider: ContextProvider backed by JSON-LD mind-schema documents from the subconscious MCP server.
     create_subconscious_provider: Factory for SubconsciousContextProvider wired to the live server.
     create_subconscious_schema_provider: Factory for SubconsciousSchemaContextProvider wired to the live server.
+    TurnResult: Result type returned by run_turn().
+    ResponseParseError: Raised when the LLM response cannot be parsed.
+    ResponseValidationError: Raised when a parsed response fails validation.
 
 MCP transport types and configuration models are available through the AOS
 Client SDK (``aos_client.mcp``)::
@@ -30,6 +33,11 @@ from purpose_driven_agent.agent import (
     GenericPurposeDrivenAgent,
     MCPServerProtocol,
     PurposeDrivenAgent,
+)
+from purpose_driven_agent.agents.purpose_driven_agent import (
+    ResponseParseError,
+    ResponseValidationError,
+    TurnResult,
 )
 from purpose_driven_agent.context_providers import (
     SUBCONSCIOUS_MCP_URL,
@@ -58,6 +66,9 @@ __all__ = [
     "create_subconscious_provider",
     "create_subconscious_schema_provider",
     "SUBCONSCIOUS_MCP_URL",
+    "TurnResult",
+    "ResponseParseError",
+    "ResponseValidationError",
 ]
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
