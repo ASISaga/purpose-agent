@@ -14,14 +14,11 @@ Example - mock service for tests::
     from purpose_driven_agent.ml_interface import IMLService
 
     class MockMLService(IMLService):
-        async def trigger_lora_training(self, training_params, adapters):
+        async def train(self, dataset, config):
             return "training-run-mock-001"
 
-        async def run_pipeline(self, subscription_id, resource_group, workspace_name):
-            return "pipeline-mock-001"
-
-        async def infer(self, agent_id, prompt):
-            return {"text": f"Mock response for {agent_id}: {prompt}"}
+        async def infer(self, prompt, adapter):
+            return {"text": f"Mock response for {adapter}: {prompt}"}
 
 Example - Azure ML backend::
 
@@ -29,27 +26,23 @@ Example - Azure ML backend::
     from azure_ml_lora import LoRATrainer, UnifiedMLManager
 
     class AzureMLService(IMLService):
-        async def trigger_lora_training(self, training_params, adapters):
+        async def train(self, dataset, config):
             trainer = LoRATrainer(
-                model_name=training_params["model_name"],
-                data_path=training_params["data_path"],
-                output_dir=training_params["output_dir"],
-                adapters=adapters,
+                model_name=config["model_name"],
+                data_path=dataset,
+                output_dir=config["output_dir"],
+                adapters=config.get("adapters", []),
             )
             trainer.train()
-            return f"Training complete, adapters saved to {training_params['output_dir']}"
+            return f"Training complete, adapters saved to {config['output_dir']}"
 
-        async def run_pipeline(self, subscription_id, resource_group, workspace_name):
-            mgr = UnifiedMLManager(subscription_id, resource_group, workspace_name)
-            return await mgr.run_pipeline()
-
-        async def infer(self, agent_id, prompt):
+        async def infer(self, prompt, adapter):
             mgr = UnifiedMLManager(...)
-            return await mgr.infer(agent_id, prompt)
+            return await mgr.infer(adapter, prompt)
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 
 class IMLService(ABC):
@@ -62,59 +55,40 @@ class IMLService(ABC):
     """
 
     @abstractmethod
-    async def trigger_lora_training(
+    async def train(
         self,
-        training_params: Dict[str, Any],
-        adapters: List[Dict[str, Any]],
-    ) -> str:
+        dataset: Any,
+        config: Dict[str, Any],
+    ) -> Any:
         """
-        Trigger LoRA adapter training.
+        Fine-tune a LoRA adapter from *dataset* using *config*.
 
         Args:
-            training_params: Dictionary with at minimum:
+            dataset: Training dataset (path, object, or identifier — format
+                is backend-specific).
+            config: Training configuration dict.  Recognised keys depend on
+                the backend; at minimum:
 
                 - ``model_name`` (str): base model identifier.
-                - ``data_path`` (str): path to training data.
-                - ``output_dir`` (str): where to write trained adapters.
-
-            adapters: List of adapter config dicts, each containing at minimum:
-
-                - ``adapter_name`` (str): logical adapter identifier.
+                - ``output_dir`` (str): where to write the trained adapter.
 
         Returns:
-            Human-readable status / run-ID string.
+            Adapter artefact (identifier string, path, or backend-specific
+            object) suitable for passing to :meth:`infer`.
         """
 
     @abstractmethod
-    async def run_pipeline(
-        self,
-        subscription_id: str,
-        resource_group: str,
-        workspace_name: str,
-    ) -> str:
+    async def infer(self, prompt: str, adapter: Any) -> Any:
         """
-        Execute the full Azure ML pipeline.
+        Run inference with *adapter* applied to the base model.
 
         Args:
-            subscription_id: Azure subscription ID.
-            resource_group: Azure resource group name.
-            workspace_name: Azure ML workspace name.
+            prompt: Input prompt string.
+            adapter: LoRA adapter artefact returned by :meth:`train`, or an
+                adapter name/identifier recognised by the backend.
 
         Returns:
-            Pipeline run ID or status string.
-        """
-
-    @abstractmethod
-    async def infer(self, agent_id: str, prompt: str) -> Dict[str, Any]:
-        """
-        Run inference for the given agent / adapter.
-
-        Args:
-            agent_id: Agent (adapter) identifier used to select the LoRA adapter.
-            prompt: Input prompt.
-
-        Returns:
-            Inference result dict; at minimum ``{"text": str}``.
+            Raw LLM response (typically a ``str`` or ``{"text": str}`` dict).
         """
 
 
@@ -127,26 +101,12 @@ class NoOpMLService(IMLService):
     Useful as a placeholder when an agent does not require ML operations.
     """
 
-    async def trigger_lora_training(
-        self,
-        training_params: Dict[str, Any],
-        adapters: List[Dict[str, Any]],
-    ) -> str:
+    async def train(self, dataset: Any, config: Dict[str, Any]) -> Any:
         raise NotImplementedError(
             "ML backend not configured. Provide an IMLService implementation."
         )
 
-    async def run_pipeline(
-        self,
-        subscription_id: str,
-        resource_group: str,
-        workspace_name: str,
-    ) -> str:
-        raise NotImplementedError(
-            "ML backend not configured. Provide an IMLService implementation."
-        )
-
-    async def infer(self, agent_id: str, prompt: str) -> Dict[str, Any]:
+    async def infer(self, prompt: str, adapter: Any) -> Any:
         raise NotImplementedError(
             "ML backend not configured. Provide an IMLService implementation."
         )

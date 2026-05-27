@@ -6,6 +6,7 @@ import os
 import re
 import uuid
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Optional
 
@@ -15,10 +16,45 @@ from purpose_driven_agent._aos_mcp_servers.routing import (
     MCPTransportType,
 )
 from purpose_driven_agent.agents.a2a_agent_tool import A2AAgentTool
-from purpose_driven_agent.agents.protocols import AOSProtocol, MCPServerProtocol
+from purpose_driven_agent.agents.protocols import (
+    AOSProtocol,
+    MCPServerProtocol,
+    PersonaCallbackProtocol,
+)
 from purpose_driven_agent.context_providers import Context, ContextProvider
 from purpose_driven_agent.context_server import ContextMCPServer
 from purpose_driven_agent.ml_interface import IMLService, NoOpMLService
+
+
+# ---------------------------------------------------------------------------
+# Turn lifecycle types
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TurnResult:
+    """Result of a single agent turn produced by :meth:`PurposeDrivenAgent.run_turn`."""
+
+    content: str
+    """The final response text, guaranteed to contain a valid routing tag."""
+    route: str
+    """The routing tag extracted from *content* (e.g. ``"[COMPLETE]"``)."""
+
+
+@dataclass
+class _AgentResponse:
+    """Internal representation of the parsed LLM response within a turn."""
+
+    content: str
+
+
+class ResponseParseError(Exception):
+    """Raised by :meth:`PurposeDrivenAgent._parse_response` when the raw LLM
+    response cannot be parsed into a structured form."""
+
+
+class ResponseValidationError(Exception):
+    """Raised by :meth:`PurposeDrivenAgent._validate` when a parsed response
+    fails schema/contract validation."""
 
 
 _AGENT_REGISTRY: dict[str, "type[PurposeDrivenAgent]"] = {}
@@ -143,12 +179,12 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
         Ensure the response ends with exactly one valid routing tag.
 
         Algorithm:
-        1. Scan the last 120 characters of the response for a known tag.
+        1. Scan the last 200 characters of the response for a known tag.
         2. If found and valid for this agent — return unchanged.
         3. If found but invalid for this agent — replace with default tag.
         4. If not found — append default tag on a new line.
 
-        This method is called by the FAS hosting adapter after every LLM
+        This method is called inside :meth:`run_turn` after every LLM
         response, before the result is returned to the Foundry workflow.
 
         Args:
@@ -160,13 +196,7 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
         allowed = self.get_routing_tags()
         default = self.get_default_routing_tag()
 
-        # Scan tail of response for any routing tag
-        tail = response_text[-120:] if len(response_text) > 120 else response_text
-        found_tag: str | None = None
-        for tag in self._routing_tags:
-            if tag.upper() in tail.upper():
-                found_tag = tag
-                break
+        found_tag = self._scan_tail_for_tag(response_text)
 
         if found_tag is None:
             # No tag present — append default
@@ -191,6 +221,17 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
         # Valid tag present — return unchanged
         return response_text
 
+    def _scan_tail_for_tag(self, text: str) -> str | None:
+        """Scan the last 200 characters of *text* for any known routing tag.
+
+        Returns the first matching tag in canonical form, or ``None``.
+        """
+        tail = text[-200:] if len(text) > 200 else text
+        for tag in self._routing_tags:
+            if tag.upper() in tail.upper():
+                return tag
+        return None
+
     def __init__(
         self,
         agent_id: str,
@@ -203,7 +244,7 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
         system_message: Optional[str] = None,
         adapter_name: Optional[str] = None,
         config: Optional[Dict[str, Any]] = None,
-        aos: Optional[AOSProtocol] = None,
+        aos: Optional[PersonaCallbackProtocol] = None,
         ml_service: Optional[IMLService] = None,
         context_provider: Optional[ContextProvider] = None,
     ) -> None:
@@ -1090,6 +1131,215 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
             return False
 
     # ------------------------------------------------------------------
+    # Turn lifecycle (LLM as English API — 8-step deterministic sequence)
+    # ------------------------------------------------------------------
+
+    async def run_turn(self, session: Any) -> TurnResult:
+        """
+        Execute one deterministic agent turn.
+
+        This is the LLM boundary method — exactly one :meth:`_invoke_llm`
+        call occurs per invocation.  All other steps are deterministic Python.
+
+        Steps:
+        1. ``_load_context(session)``   — Mind MCP reads, JSON-LD state injection
+        2. ``_build_prompt(context, session)`` — structured prompt assembly
+        3. ``_invoke_llm(prompt)``       — exactly one LLM call
+        4. ``_parse_response(raw)``      — deterministic parsing
+        5. ``_validate(response)``       — schema validation
+        6. ``enforce_routing_tag(text)`` — routing protocol guarantee
+        7. ``_write_state(routed, session)`` — Mind MCP writes, audit trail
+        8. Return :class:`TurnResult`
+
+        Args:
+            session: Session payload (event dict or equivalent) carrying the
+                current turn's input and contextual metadata.
+
+        Returns:
+            :class:`TurnResult` with ``content`` (routed response text) and
+            ``route`` (extracted routing tag string).
+
+        Raises:
+            ResponseParseError: If the raw LLM response cannot be parsed.
+            ResponseValidationError: If the parsed response fails validation.
+        """
+        context = await self._load_context(session)
+        prompt = self._build_prompt(context, session)
+        raw = await self._invoke_llm(prompt)          # exactly one LLM call
+        response = self._parse_response(raw)          # ResponseParseError on failure
+        validated = self._validate(response)          # ResponseValidationError on failure
+        routed_text = self.enforce_routing_tag(validated.content)   # routing guarantee
+        await self._write_state(routed_text, session)
+        tag = self._extract_routing_tag(routed_text)
+        return TurnResult(content=routed_text, route=tag)
+
+    async def _load_context(self, session: Any) -> Context:
+        """
+        Step 1 — Load context from Mind MCP and active context providers.
+
+        Reads cross-session state from registered MCP servers and
+        context providers, returning a :class:`Context` to be injected
+        into the prompt in step 2.
+
+        Args:
+            session: Current session payload.
+
+        Returns:
+            :class:`Context` object with assembled instructions.
+        """
+        instructions_parts: List[str] = []
+
+        if self.context_provider:
+            messages = [session] if session else []
+            ctx = await self.context_provider.get_context(messages=messages)
+            if ctx.instructions:
+                instructions_parts.append(ctx.instructions)
+
+        if self.mcp_context_server:
+            stored = await self.mcp_context_server.get_context("injected_context")
+            if stored:
+                instructions_parts.append(str(stored))
+
+        return Context(instructions="\n".join(instructions_parts) if instructions_parts else "")
+
+    def _build_prompt(self, context: Context, session: Any) -> str:
+        """
+        Step 2 — Assemble the structured prompt for the LLM.
+
+        Combines the agent's purpose/system framing, JSON-LD context
+        (if present), and the current turn input from *session* into a
+        deterministic, reproducible prompt string.
+
+        Args:
+            context: Context object produced by :meth:`_load_context`.
+            session: Current session payload; ``session.get("data")`` or
+                the raw string content is used as the turn input.
+
+        Returns:
+            Assembled prompt string.
+        """
+        parts: List[str] = [f"Purpose: {self.purpose}"]
+        if context.instructions:
+            parts.append(f"Context:\n{context.instructions}")
+        turn_input = (
+            session.get("data") if isinstance(session, dict) else str(session)
+        ) or ""
+        if turn_input:
+            parts.append(f"Input:\n{turn_input}")
+        return "\n\n".join(parts)
+
+    async def _invoke_llm(self, prompt: str) -> str:
+        """
+        Step 3 — The single LLM call per turn (the English API boundary).
+
+        Delegates to the agent_framework LLM interface when available.
+        Raises :class:`NotImplementedError` when no LLM backend is wired.
+        This method is **never** called from anywhere other than
+        :meth:`run_turn`.
+
+        Args:
+            prompt: Assembled prompt string from :meth:`_build_prompt`.
+
+        Returns:
+            Raw LLM response string.
+
+        Raises:
+            NotImplementedError: When no LLM backend (agent_framework) is
+                available.
+        """
+        raise NotImplementedError(
+            "_invoke_llm() requires an LLM backend. "
+            "Wire an agent_framework LLM or override this method in a subclass."
+        )
+
+    def _parse_response(self, raw: str) -> _AgentResponse:
+        """
+        Step 4 — Deterministically parse the raw LLM response.
+
+        No LLM call, no retry, no fallback generation.  Raises
+        :class:`ResponseParseError` on failure.
+
+        Args:
+            raw: Raw response string from :meth:`_invoke_llm`.
+
+        Returns:
+            :class:`_AgentResponse` with the parsed content.
+
+        Raises:
+            ResponseParseError: If *raw* is empty or cannot be parsed.
+        """
+        if not raw or not raw.strip():
+            raise ResponseParseError(
+                "LLM returned an empty response — cannot parse."
+            )
+        return _AgentResponse(content=raw)
+
+    def _validate(self, response: _AgentResponse) -> _AgentResponse:
+        """
+        Step 5 — Validate the parsed response against the agent's contract.
+
+        Raises :class:`ResponseValidationError` on failure — no silent
+        fallback, no retry.
+
+        Args:
+            response: Parsed response from :meth:`_parse_response`.
+
+        Returns:
+            The validated response (unchanged when valid).
+
+        Raises:
+            ResponseValidationError: If the response content violates the
+                agent's output contract.
+        """
+        if not isinstance(response, _AgentResponse) or not response.content:
+            raise ResponseValidationError(
+                f"Response validation failed: unexpected response type or empty content. "
+                f"Got: {response!r}"
+            )
+        return response
+
+    async def _write_state(self, routed_text: str, session: Any) -> None:
+        """
+        Step 7 — Persist routing decision and response to Mind MCP.
+
+        Always called after :meth:`enforce_routing_tag` — never bypassed.
+        Writes the routed response text and an audit record to the MCP
+        context server.
+
+        Args:
+            routed_text: The routing-enforced response string.
+            session: Current session payload (used to record the turn ID).
+        """
+        if self.mcp_context_server:
+            await self.mcp_context_server.set_context(
+                "last_turn_response", routed_text
+            )
+            await self.mcp_context_server.set_context(
+                "last_turn_at", datetime.utcnow().isoformat()
+            )
+        self.logger.debug(
+            "Agent '%s' _write_state: route=%s",
+            self.agent_id,
+            self._extract_routing_tag(routed_text),
+        )
+
+    def _extract_routing_tag(self, text: str) -> str:
+        """
+        Extract the routing tag from *text* using the agent's allowed tag set.
+
+        Returns the first matching tag found in the last 200 characters.
+        Falls back to :meth:`get_default_routing_tag` when no tag is found.
+
+        Args:
+            text: Response text to inspect.
+
+        Returns:
+            Routing tag string (e.g. ``"[COMPLETE]"``).
+        """
+        found = self._scan_tail_for_tag(text)
+        return found if found is not None else self.get_default_routing_tag()
+
+    # ------------------------------------------------------------------
     # Messaging
     # ------------------------------------------------------------------
 
@@ -1164,6 +1414,25 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
                 "processed_by": self.agent_id,
             }
 
+            # Delegate LLM-boundary operations to the 8-step turn lifecycle.
+            # Skipped when no LLM backend is configured (NotImplementedError).
+            turn_result: Optional[TurnResult] = None
+            try:
+                turn_result = await self.run_turn(event)
+            except NotImplementedError:
+                pass  # No LLM backend wired — turn lifecycle not active
+            except (ResponseParseError, ResponseValidationError) as exc:
+                self.logger.error(
+                    "Agent '%s' turn lifecycle error: %s", self.agent_id, exc
+                )
+                return {"status": "error", "error": str(exc)}
+
+            if turn_result is not None:
+                result["turn_result"] = {
+                    "content": turn_result.content,
+                    "route": turn_result.route,
+                }
+
             if event_type and event_type in self.event_subscriptions:
                 handler_results = []
                 for handler in self.event_subscriptions[event_type]:
@@ -1227,12 +1496,8 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
         """
         Perform a named action, including ML pipeline operations.
 
-        Automatically injects :attr:`adapter_name` into LoRA training and
-        inference params when not explicitly set.
-
         Args:
-            action: One of ``"trigger_lora_training"``,
-                ``"run_azure_ml_pipeline"``, or ``"aml_infer"``.
+            action: One of ``"train"`` or ``"aml_infer"``.
             params: Action-specific parameter dictionary.
 
         Returns:
@@ -1241,26 +1506,13 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
         Raises:
             ValueError: For unknown *action* names.
         """
-        # Inject adapter_name automatically
-        if self.adapter_name:
-            if action == "trigger_lora_training":
-                for adapter in params.get("adapters", []):
-                    adapter.setdefault("adapter_name", self.adapter_name)
-            elif action == "aml_infer":
-                params.setdefault("agent_id", self.adapter_name)
-
-        if action == "trigger_lora_training":
-            return await self.ml_service.trigger_lora_training(
-                params["training_params"], params["adapters"]
-            )
-        if action == "run_azure_ml_pipeline":
-            return await self.ml_service.run_pipeline(
-                params["subscription_id"],
-                params["resource_group"],
-                params["workspace_name"],
+        if action == "train":
+            return await self.ml_service.train(
+                params["dataset"], params.get("config", {})
             )
         if action == "aml_infer":
-            return await self.ml_service.infer(params["agent_id"], params["prompt"])
+            adapter = params.get("adapter") or self.adapter_name
+            return await self.ml_service.infer(params["prompt"], adapter)
         raise ValueError(f"Unknown action: '{action}'")
 
     async def execute_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
