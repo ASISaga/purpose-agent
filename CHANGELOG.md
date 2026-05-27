@@ -8,6 +8,7 @@ All notable changes to `purpose-driven-agent` are documented here.
 
 - **`IMLService` interface redesigned** — `trigger_lora_training(training_params, adapters)` renamed to `train(dataset, config)`; `infer(agent_id, prompt)` signature changed to `infer(prompt, adapter)`; `run_pipeline()` removed. Existing `IMLService` implementations must be updated.
 - **`AOSProtocol` redefined** — Now a PEP 544 structural protocol for the agent interaction interface (`get_routing_tags`, `get_default_routing_tag`, `enforce_routing_tag`, `run_turn`). The previous persona callback protocol (`get_available_personas`, `validate_personas`) is extracted to `PersonaCallbackProtocol`.
+- **`PurposeDrivenAgent.__init__` `aos=` parameter type narrowed** — The `aos` keyword argument now expects `Optional[PersonaCallbackProtocol]` instead of `Optional[AOSProtocol]`. Callers passing a statically-typed `AOSProtocol` reference must re-type to `PersonaCallbackProtocol` (or a concrete type satisfying both protocols).
 - **`AOSProtocol` removed from `__all__`** — `agent.py` and `agents/__init__.py` no longer export `AOSProtocol` from `__all__`. Import directly from `purpose_driven_agent.agents.protocols` if needed.
 - **`act()` actions updated** — `"trigger_lora_training"` and `"run_azure_ml_pipeline"` actions removed; use `"train"` (with `dataset`, `config` keys) instead.
 
