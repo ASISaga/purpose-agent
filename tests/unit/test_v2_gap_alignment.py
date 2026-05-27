@@ -394,3 +394,56 @@ class TestVersion:
         pyproject = repo_root / "pyproject.toml"
         content = pyproject.read_text()
         assert 'version = "2.0.0"' in content
+
+
+# ===========================================================================
+# GenericPurposeDrivenAgent._invoke_llm — concrete override
+# ===========================================================================
+
+
+class TestGenericInvokeLLM:
+    def test_override_exists(self):
+        """GenericPurposeDrivenAgent must override _invoke_llm."""
+        from purpose_driven_agent.agents.generic_purpose_driven_agent import (
+            GenericPurposeDrivenAgent,
+        )
+        from purpose_driven_agent.agents.purpose_driven_agent import PurposeDrivenAgent
+
+        # The override must live directly on GenericPurposeDrivenAgent, not just
+        # on the base class.
+        assert "_invoke_llm" in GenericPurposeDrivenAgent.__dict__, (
+            "GenericPurposeDrivenAgent must define _invoke_llm; "
+            "base raises NotImplementedError which makes run_turn() unusable."
+        )
+
+    def test_invoke_llm_returns_nonempty_string(self):
+        """_invoke_llm() stub returns a non-empty string (no NotImplementedError)."""
+        import asyncio
+        from purpose_driven_agent import GenericPurposeDrivenAgent
+
+        agent = GenericPurposeDrivenAgent(
+            agent_id="test-generic", purpose="testing"
+        )
+        result = asyncio.get_event_loop().run_until_complete(
+            agent._invoke_llm("hello prompt")
+        )
+        assert isinstance(result, str)
+        assert result.strip(), "_invoke_llm() stub must return a non-empty string"
+
+    def test_run_turn_completes_without_error(self):
+        """run_turn() on GenericPurposeDrivenAgent completes end-to-end."""
+        import asyncio
+        from purpose_driven_agent import GenericPurposeDrivenAgent
+
+        agent = GenericPurposeDrivenAgent(
+            agent_id="test-generic-turn", purpose="testing run_turn"
+        )
+        session = {"session_id": "s1", "event": "ping"}
+        result = asyncio.get_event_loop().run_until_complete(
+            agent.run_turn(session)
+        )
+        from purpose_driven_agent import TurnResult
+
+        assert isinstance(result, TurnResult)
+        assert isinstance(result.content, str)
+        assert isinstance(result.route, str)

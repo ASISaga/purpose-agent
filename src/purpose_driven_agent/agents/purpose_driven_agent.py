@@ -16,7 +16,11 @@ from purpose_driven_agent._aos_mcp_servers.routing import (
     MCPTransportType,
 )
 from purpose_driven_agent.agents.a2a_agent_tool import A2AAgentTool
-from purpose_driven_agent.agents.protocols import AOSProtocol, MCPServerProtocol
+from purpose_driven_agent.agents.protocols import (
+    AOSProtocol,
+    MCPServerProtocol,
+    PersonaCallbackProtocol,
+)
 from purpose_driven_agent.context_providers import Context, ContextProvider
 from purpose_driven_agent.context_server import ContextMCPServer
 from purpose_driven_agent.ml_interface import IMLService, NoOpMLService
@@ -240,7 +244,7 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
         system_message: Optional[str] = None,
         adapter_name: Optional[str] = None,
         config: Optional[Dict[str, Any]] = None,
-        aos: Optional[AOSProtocol] = None,
+        aos: Optional[PersonaCallbackProtocol] = None,
         ml_service: Optional[IMLService] = None,
         context_provider: Optional[ContextProvider] = None,
     ) -> None:
